@@ -170,7 +170,11 @@
     <span class="logo-eyebrow">Financial Independence</span>
     <span class="logo-name">NZ FIRE Calculator</span>
   </div>
-  <div class="header-badge">NZ Edition</div>
+  <div style="display:flex;align-items:center;gap:14px;">
+    <span id="savedNote" style="font-size:11px;font-weight:500;letter-spacing:0.5px;color:#C8B8E8;opacity:0;transition:opacity 0.4s;">Saved ✓</span>
+    <button id="resetBtn" style="background:none;border:1px solid rgba(200,184,232,0.35);color:#C8B8E8;font-family:'DM Sans',sans-serif;font-size:11px;font-weight:600;letter-spacing:1px;text-transform:uppercase;padding:6px 14px;border-radius:20px;cursor:pointer;transition:background 0.2s,border-color 0.2s;" onmouseover="this.style.background='rgba(200,184,232,0.12)';this.style.borderColor='rgba(200,184,232,0.6)'" onmouseout="this.style.background='none';this.style.borderColor='rgba(200,184,232,0.35)'">Reset</button>
+    <div class="header-badge">NZ Edition</div>
+  </div>
 </header>
 
 <div class="hero">
@@ -459,13 +463,52 @@
 </footer>
 
 <script>
-const state = {
+// ── Default settings ──
+const DEFAULTS = {
   age: 40, fireAge: 60, status: 'single',
   income: 80000, spend: 50000, savings: 50000,
   monthlyInvest: 500, salaryGrowth: 2,
   ks: 30000, ksRate: 3.5, ksEmployerRate: 3.5, ksFundReturn: 0.06,
   investReturn: 0.07, inflation: 0.03, swr: 0.04, includeSuper: true,
 };
+
+const STORAGE_KEY = 'nzFireCalculator.v1';
+
+// Storage can be unavailable (private browsing, sandboxed frames, blocked
+// cookies). Every access is guarded so the calculator still works without it.
+function loadSaved() {
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== 'object') return null;
+    // Only accept keys we recognise, and only if the type matches the default.
+    const clean = {};
+    for (const key of Object.keys(DEFAULTS)) {
+      if (key in parsed && typeof parsed[key] === typeof DEFAULTS[key]) {
+        clean[key] = parsed[key];
+      }
+    }
+    return clean;
+  } catch (e) {
+    return null;
+  }
+}
+
+function saveState() {
+  try {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    showSavedNote();
+  } catch (e) {
+    // Storage unavailable — carry on without persisting.
+  }
+}
+
+function clearSaved() {
+  try { window.localStorage.removeItem(STORAGE_KEY); } catch (e) {}
+}
+
+const state = Object.assign({}, DEFAULTS, loadSaved() || {});
 
 function pieTaxRate(income) {
   if (income <= 14000)  return 0.105;
@@ -763,12 +806,78 @@ returnInput.addEventListener('input',  () => {
 });
 returnInput.addEventListener('blur', () => {
   const v = parseFloat(returnInput.value);
-  setReturn(isNaN(v) ? 7 : v);
+  setReturn(isNaN(v) ? DEFAULTS.investReturn * 100 : v);
 });
 
-// Initialise display to one decimal place
-returnInput.value = (state.investReturn * 100).toFixed(1);
+// ── Push current state into every control ──
+function applyStateToControls() {
+  const sliderMap = [
+    ['ageSlider','ageInput','age'], ['fireAgeSlider','fireAgeInput','fireAge'],
+    ['incomeSlider','incomeInput','income'], ['spendSlider','spendInput','spend'],
+    ['savingsSlider','savingsInput','savings'],
+    ['monthlyInvestSlider','monthlyInvestInput','monthlyInvest'],
+    ['salaryGrowthSlider','salaryGrowthInput','salaryGrowth'],
+    ['ksSlider','ksInput','ks'],
+  ];
+  sliderMap.forEach(([sid, iid, key]) => {
+    document.getElementById(sid).value = state[key];
+    document.getElementById(iid).value = state[key];
+  });
 
+  const pillMap = [
+    ['statusPills', v => v === state.status],
+    ['ksPills',         v => parseFloat(v) === state.ksRate],
+    ['ksEmployerPills', v => parseFloat(v) === state.ksEmployerRate],
+    ['ksFundPills',     v => parseFloat(v) === state.ksFundReturn],
+    ['inflationPills',  v => parseFloat(v) === state.inflation],
+    ['swrPills',        v => parseFloat(v) === state.swr],
+    ['superPills',      v => (v === 'yes') === state.includeSuper],
+  ];
+  pillMap.forEach(([groupId, matches]) => {
+    document.getElementById(groupId).querySelectorAll('.pill').forEach(p => {
+      p.classList.toggle('active', matches(p.dataset.value));
+    });
+  });
+
+  const pct = state.investReturn * 100;
+  returnSlider.value = pct;
+  returnInput.value  = pct.toFixed(1);
+  syncReturnPills(pct);
+}
+
+// ── Persist on change (debounced so dragging a slider doesn't thrash) ──
+let saveTimer = null;
+function queueSave() {
+  clearTimeout(saveTimer);
+  saveTimer = setTimeout(saveState, 400);
+}
+
+let saveNoteTimer = null;
+function showSavedNote() {
+  const note = document.getElementById('savedNote');
+  if (!note) return;
+  note.style.opacity = '1';
+  clearTimeout(saveNoteTimer);
+  saveNoteTimer = setTimeout(() => { note.style.opacity = '0'; }, 1600);
+}
+
+// Wrap calculate so every recalculation also queues a save
+const runCalculation = calculate;
+calculate = function () {
+  runCalculation();
+  queueSave();
+};
+
+// ── Reset button ──
+document.getElementById('resetBtn').addEventListener('click', () => {
+  Object.assign(state, DEFAULTS);
+  clearSaved();
+  applyStateToControls();
+  calculate();
+});
+
+// ── Initialise ──
+applyStateToControls();
 calculate();
 </script>
 </body>
